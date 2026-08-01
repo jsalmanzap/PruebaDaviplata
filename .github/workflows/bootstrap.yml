@@ -1,0 +1,122 @@
+name: Bootstrap — Infraestructura Base (una sola vez)
+
+# Este workflow se ejecuta una única vez para aprovisionar la infraestructura
+# base requerida por Terraform:
+#   - Bucket S3 para almacenar el estado (Terraform State)
+#   - Tabla DynamoDB para el control de bloqueos (State Lock)
+#   - Proveedor OIDC de GitHub en AWS IAM
+#   - Rol IAM que utilizarán los pipelines para autenticarse mediante OIDC
+#
+# Una vez finalizada la ejecución:
+#   1. Guarda el valor del output 'github_actions_role_arn' como el secreto
+#      AWS_OIDC_ROLE_ARN en el repositorio de GitHub.
+#   2. Elimina los secretos AWS_ACCESS_KEY_ID y AWS_SECRET_ACCESS_KEY,
+#      ya que dejarán de ser necesarios.
+#   3. A partir de ese momento, todos los pipelines se autenticarán mediante
+#      OIDC, eliminando el uso de credenciales estáticas.
+
+on:
+  workflow_dispatch:
+    inputs:
+      github_repo:
+        description: "Repositorio GitHub (owner/repo)"
+        required: true
+        default: "jsalmanzap/PruebaDaviplata"
+      aws_region:
+        description: "Región AWS"
+        required: true
+        default: "us-east-1"
+      confirm:
+        description: "¿Seguro que deseas continuar? Escribe 'CREAR' para confirmar y evitar ejecuciones por error"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.8.0"
+  AWS_REGION: ${{ github.event.inputs.aws_region }}
+
+jobs:
+  bootstrap:
+    name: "Crear infraestructura base"
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'CREAR'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (estáticas — solo para bootstrap)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Verificar identidad AWS
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Crear terraform.tfvars para el bootstrap
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          cat > infra/bootstrap/terraform.tfvars <<EOF
+          project_name   = "microservicio-echo"
+          aws_region     = "${{ env.AWS_REGION }}"
+          aws_account_id = "${ACCOUNT_ID}"
+          github_repo    = "${{ github.event.inputs.github_repo }}"
+          EOF
+          echo "### Configuración del bootstrap" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Campo | Valor |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Account ID | \`${ACCOUNT_ID}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GitHub Repo | \`${{ github.event.inputs.github_repo }}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform Init (estado local — no necesita S3 aún)
+        run: terraform init
+        working-directory: infra/bootstrap
+
+      - name: Terraform Plan
+        run: terraform plan -var-file=terraform.tfvars -out=bootstrap.tfplan
+        working-directory: infra/bootstrap
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve bootstrap.tfplan
+        working-directory: infra/bootstrap
+
+      - name: Mostrar outputs — configura estos valores en GitHub
+        run: |
+          ROLE_ARN=$(terraform output -raw github_actions_role_arn)
+          BUCKET=$(terraform output -raw state_bucket_name)
+          TABLE=$(terraform output -raw locks_table_name)
+
+          echo "## ✅ Bootstrap completado" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Próximos pasos:" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Agrega este valor como secret **\`AWS_OIDC_ROLE_ARN\`** en GitHub:" >> "$GITHUB_STEP_SUMMARY"
+          echo "   \`${ROLE_ARN}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "2. Elimina los secrets **\`AWS_ACCESS_KEY_ID\`** y **\`AWS_SECRET_ACCESS_KEY\`** del repo" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Haz push a \`develop\` para disparar el pipeline de infra con OIDC" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Output | Valor |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Role ARN (→ secret AWS_OIDC_ROLE_ARN) | \`${ROLE_ARN}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| S3 Bucket | \`${BUCKET}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| DynamoDB Table | \`${TABLE}\` |" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "ROLE_ARN=${ROLE_ARN}" >> "$GITHUB_ENV"
+
+      - name: Verificar recursos creados en AWS
+        run: |
+          echo "--- S3 Bucket ---"
+          aws s3api head-bucket --bucket "microservicio-echo-tfstate-$(aws sts get-caller-identity --query Account --output text)" && echo "OK"
+          echo "--- DynamoDB Table ---"
+          aws dynamodb describe-table --table-name microservicio-echo-tf-locks --query 'Table.TableStatus' --output text
+          echo "--- OIDC Provider ---"
+          aws iam list-open-id-connect-providers --query 'OpenIDConnectProviderList[].Arn' --output text
+          echo "--- IAM Role ---"
+          aws iam get-role --role-name microservicio-echo-github-actions --query 'Role.Arn' --output text

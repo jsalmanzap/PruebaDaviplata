@@ -1,0 +1,19 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+htmlcov/
+.coverage
+
+# Terraform — archivos locales sensibles
+*.tfvars
+!*.tfvars.example
+*.tfstate
+*.tfstate.backup
+*.tfplan
+backend.hcl
+!backend.hcl.example
+.terraform/
+.terraform.lock.hcl

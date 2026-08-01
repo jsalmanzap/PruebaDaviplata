@@ -1,0 +1,299 @@
+name: Deploy → dev
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: microservicio-echo
+  ENV_NAME: dev
+
+jobs:
+  # ── 1. Build & Push imagen Docker ────────────────────────────────────────────
+  build-and-push:
+    name: "Build & Push → ECR [dev]"
+    runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.build.outputs.image_uri }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & Push imagen
+        id: build
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}:${{ github.sha }}"
+
+          docker build \
+            --tag "$IMAGE_URI" \
+            --label "git-commit=${{ github.sha }}" \
+            --label "environment=${{ env.ENV_NAME }}" \
+            .
+
+          docker push "$IMAGE_URI"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "### Imagen publicada: \`${IMAGE_URI}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 2. Deploy al cluster ECS dev ─────────────────────────────────────────────
+  deploy:
+    name: "Deploy → ECS [dev]"
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: dev
+    outputs:
+      previous_task_def_arn: ${{ steps.snapshot.outputs.previous_task_def_arn }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Capturar revisión estable actual (pre-deploy)
+        id: snapshot
+        run: |
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}"
+          PREV=$(aws ecs describe-services \
+            --cluster "${CLUSTER}" \
+            --services "${CLUSTER}" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+          echo "previous_task_def_arn=${PREV}" >> "$GITHUB_OUTPUT"
+          echo "Snapshot estable capturado: ${PREV}"
+
+      - name: Registrar nueva revisión de Task Definition
+        id: task-def
+        run: |
+          IMAGE="${{ needs.build-and-push.outputs.image_uri }}"
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}"
+
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition "${CLUSTER}" \
+            --query 'taskDefinition' --output json)
+
+          NEW=$(echo "$CURRENT" | python3 -c "
+          import json, sys
+          td = json.load(sys.stdin)
+          td['containerDefinitions'][0]['image'] = '${IMAGE}'
+          for k in ['taskDefinitionArn','revision','status','requiresAttributes',
+                    'compatibilities','registeredAt','registeredBy']:
+              td.pop(k, None)
+          print(json.dumps(td))
+          ")
+
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          echo "task_def_arn=${ARN}" >> "$GITHUB_OUTPUT"
+
+      - name: Actualizar servicio ECS
+        run: |
+          aws ecs update-service \
+            --cluster "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}" \
+            --service  "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}" \
+            --task-definition "${{ steps.task-def.outputs.task_def_arn }}"
+
+      - name: Esperar estabilización del servicio
+        run: |
+          aws ecs wait services-stable \
+            --cluster  "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}" \
+            --services "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}"
+
+      - name: Smoke test — /health
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}-alb" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+
+          for i in {1..6}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${ALB_DNS}/health")
+            if [ "$STATUS" = "200" ]; then
+              echo "Smoke test OK: HTTP ${STATUS} — http://${ALB_DNS}"
+              exit 0
+            fi
+            echo "Intento ${i}/6: HTTP ${STATUS} — reintentando en 10s..."
+            sleep 10
+          done
+          echo "Smoke test fallido tras 6 intentos: HTTP ${STATUS}"
+          exit 1
+
+      - name: Resumen del deploy
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}-alb" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+          echo "## Deploy completado — \`${{ env.ENV_NAME }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Campo   | Valor |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Imagen  | \`${{ needs.build-and-push.outputs.image_uri }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit  | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| URL     | http://${ALB_DNS} |" >> "$GITHUB_STEP_SUMMARY"
+
+  rollback:
+    name: "Rollback → ECS [dev]"
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy]
+    if: always() && needs.deploy.result == 'failure'
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: "1) Recuperar última versión estable"
+        id: stable
+        run: |
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}"
+          STABLE_ARN="${{ needs.deploy.outputs.previous_task_def_arn }}"
+
+          if [ -z "${STABLE_ARN}" ] || [ "${STABLE_ARN}" = "None" ]; then
+            echo "Snapshot no disponible — buscando revisión anterior en ECS..."
+            STABLE_ARN=$(aws ecs list-task-definitions \
+              --family-prefix "${CLUSTER}" \
+              --sort DESC \
+              --query 'taskDefinitionArns[1]' \
+              --output text)
+          fi
+
+          if [ -z "${STABLE_ARN}" ] || [ "${STABLE_ARN}" = "None" ]; then
+            echo "::error::No existe versión estable previa para ejecutar el rollback"
+            exit 1
+          fi
+
+          echo "stable_arn=${STABLE_ARN}" >> "$GITHUB_OUTPUT"
+          echo "Versión estable recuperada: ${STABLE_ARN}"
+
+      - name: "2) Revertir el despliegue fallido"
+        id: revert
+        run: |
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}"
+          STABLE_ARN="${{ steps.stable.outputs.stable_arn }}"
+
+          aws ecs update-service \
+            --cluster "${CLUSTER}" \
+            --service  "${CLUSTER}" \
+            --task-definition "${STABLE_ARN}"
+
+          echo "Servicio revertido a: ${STABLE_ARN}"
+
+      - name: Esperar estabilización post-rollback
+        timeout-minutes: 10
+        run: |
+          aws ecs wait services-stable \
+            --cluster  "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}" \
+            --services "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}"
+
+      - name: "3) Validaciones post-rollback — smoke test"
+        id: validation
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}-alb" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+
+          echo "alb_dns=${ALB_DNS}" >> "$GITHUB_OUTPUT"
+          RESULT="OK"
+
+          for i in {1..6}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${ALB_DNS}/health")
+            if [ "$STATUS" = "200" ]; then
+              echo "Rollback validado: HTTP ${STATUS} — http://${ALB_DNS}"
+              break
+            fi
+            echo "Intento ${i}/6: HTTP ${STATUS} — reintentando en 10s..."
+            [ "$i" = "6" ] && RESULT="FAILED"
+            sleep 10
+          done
+
+          echo "health_status=${RESULT}" >> "$GITHUB_OUTPUT"
+
+          if [ "${RESULT}" = "FAILED" ]; then
+            echo "::error::Validación post-rollback fallida — el servicio no respondió tras 6 intentos"
+            exit 1
+          fi
+
+      - name: "4) Registro de incidente"
+        if: always()
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ env.ENV_NAME }}"
+          STABLE_ARN="${{ steps.stable.outputs.stable_arn }}"
+          FAILED_IMAGE="${{ needs.build-and-push.outputs.image_uri }}"
+          HEALTH="${{ steps.validation.outputs.health_status }}"
+          ALB_DNS="${{ steps.validation.outputs.alb_dns }}"
+          LOG_GROUP="/incidents/${CLUSTER}"
+          LOG_STREAM="deploy-failure-${{ github.sha }}-${{ github.run_id }}"
+          EPOCH_MS=$(($(date +%s) * 1000))
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # ── GitHub Step Summary ──────────────────────────────────────────────
+          {
+            echo "## Incidente de Despliegue — \`${{ env.ENV_NAME }}\` — ${TIMESTAMP}"
+            echo ""
+            echo "| Campo                | Valor |"
+            echo "|----------------------|-------|"
+            echo "| Ambiente             | \`${{ env.ENV_NAME }}\` |"
+            echo "| Timestamp UTC        | \`${TIMESTAMP}\` |"
+            echo "| Imagen fallida       | \`${FAILED_IMAGE}\` |"
+            echo "| Commit fallido       | \`${{ github.sha }}\` |"
+            echo "| Autor                | \`${{ github.actor }}\` |"
+            echo "| Workflow run         | [${{ github.run_id }}](${RUN_URL}) |"
+            echo "| Task def estable     | \`${STABLE_ARN}\` |"
+            echo "| Estado del rollback  | \`${HEALTH:-UNKNOWN}\` |"
+            echo "| URL del servicio     | http://${ALB_DNS} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # ── GitHub workflow annotation ────────────────────────────────────────
+          echo "::error title=Deploy fallido — Rollback ejecutado en ${{ env.ENV_NAME }}::Commit: ${{ github.sha }} | Autor: ${{ github.actor }} | Revertido a: ${STABLE_ARN} | Validación: ${HEALTH:-UNKNOWN}"
+
+          # ── CloudWatch Logs (best-effort) ─────────────────────────────────────
+          aws logs create-log-group \
+            --log-group-name "${LOG_GROUP}" 2>/dev/null || true
+          aws logs create-log-stream \
+            --log-group-name  "${LOG_GROUP}" \
+            --log-stream-name "${LOG_STREAM}" 2>/dev/null || true
+
+          CW_MSG=$(jq -cn \
+            --arg level    "ERROR" \
+            --arg event    "deploy_failure_rollback" \
+            --arg ts       "${TIMESTAMP}" \
+            --arg env      "${{ env.ENV_NAME }}" \
+            --arg commit   "${{ github.sha }}" \
+            --arg image    "${FAILED_IMAGE}" \
+            --arg actor    "${{ github.actor }}" \
+            --arg run_id   "${{ github.run_id }}" \
+            --arg stable   "${STABLE_ARN}" \
+            --arg health   "${HEALTH:-UNKNOWN}" \
+            --arg url      "http://${ALB_DNS}" \
+            '{level:$level,event:$event,timestamp:$ts,environment:$env,failed_commit:$commit,failed_image:$image,actor:$actor,run_id:$run_id,stable_task_def:$stable,rollback_health:$health,alb_url:$url}')
+
+          aws logs put-log-events \
+            --log-group-name  "${LOG_GROUP}" \
+            --log-stream-name "${LOG_STREAM}" \
+            --log-events "[{\"timestamp\":${EPOCH_MS},\"message\":$(echo "${CW_MSG}" | jq -Rc .)}]" \
+            2>/dev/null || true
+
+          echo "Incidente registrado — CloudWatch: ${LOG_GROUP}/${LOG_STREAM}"

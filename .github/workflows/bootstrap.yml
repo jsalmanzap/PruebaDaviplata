@@ -22,6 +22,10 @@ on:
         description: "Repositorio GitHub (owner/repo)"
         required: true
         default: "jsalmanzap/PruebaDaviplata"
+      github_repo_immutable:
+        description: "Repositorio GitHub con IDs inmutables (owner@owner_id/repo@repo_id) — dejar vacío si el owner/repo nunca ha sido renombrado"
+        required: false
+        default: "jsalmanzap@311190253/PruebaDaviplata@1318549815"
       aws_region:
         description: "Región AWS"
         required: true
@@ -65,10 +69,11 @@ jobs:
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           cat > infraestructura/bootstrap/terraform.tfvars <<EOF
-          project_name   = "microservicio-echo"
-          aws_region     = "${{ env.AWS_REGION }}"
-          aws_account_id = "${ACCOUNT_ID}"
-          github_repo    = "${{ github.event.inputs.github_repo }}"
+          project_name           = "microservicio-echo"
+          aws_region             = "${{ env.AWS_REGION }}"
+          aws_account_id         = "${ACCOUNT_ID}"
+          github_repo            = "${{ github.event.inputs.github_repo }}"
+          github_repo_immutable  = "${{ github.event.inputs.github_repo_immutable }}"
           EOF
           echo "### Configuración del bootstrap" >> "$GITHUB_STEP_SUMMARY"
           echo "| Campo | Valor |" >> "$GITHUB_STEP_SUMMARY"

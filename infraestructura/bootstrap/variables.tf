@@ -16,3 +16,9 @@ variable "github_repo" {
   type        = string
   description = "Repositorio GitHub con formato owner/repo"
 }
+
+variable "github_repo_immutable" {
+  type        = string
+  description = "Repositorio GitHub con formato owner@owner_id/repo@repo_id (claim 'sub' inmutable que GitHub usa tras un rename de owner/repo)"
+  default     = ""
+}

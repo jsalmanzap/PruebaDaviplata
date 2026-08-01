@@ -75,7 +75,12 @@ resource "aws_iam_role" "github_actions" {
       Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*" }
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = compact([
+            "repo:${var.github_repo}:*",
+            var.github_repo_immutable != "" ? "repo:${var.github_repo_immutable}:*" : ""
+          ])
+        }
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
       }
     }]
@@ -108,9 +113,9 @@ resource "aws_iam_role_policy" "github_actions" {
         Sid    = "InfraManagement"
         Effect = "Allow"
         Action = [
-          "ec2:*", "ecs:*", "ecr:*", "iam:*",
-          "logs:*", "elasticloadbalancing:*",
-          "secretsmanager:*", "application-autoscaling:*"
+          "ec2:", "ecs:", "ecr:", "iam:",
+          "logs:", "elasticloadbalancing:",
+          "secretsmanager:", "application-autoscaling:"
         ]
         Resource = "*"
       }

@@ -1,4 +1,4 @@
-name: Bootstrap — infraestructura Base (una sola vez)
+name: Bootstrap — Infraestructura Base (una sola vez)
 
 # Este workflow se ejecuta una única vez para aprovisionar la infraestructura
 # base requerida por Terraform:
@@ -73,8 +73,8 @@ jobs:
           echo "### Configuración del bootstrap" >> "$GITHUB_STEP_SUMMARY"
           echo "| Campo | Valor |" >> "$GITHUB_STEP_SUMMARY"
           echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Account ID | \`${ACCOUNT_ID}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| GitHub Repo | \`${{ github.event.inputs.github_repo }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Account ID | \${ACCOUNT_ID}\ |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| GitHub Repo | \${{ github.event.inputs.github_repo }}\ |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Terraform Init (estado local — no necesita S3 aún)
         run: terraform init
@@ -89,6 +89,7 @@ jobs:
         working-directory: infraestructura/bootstrap
 
       - name: Mostrar outputs — configura estos valores en GitHub
+        working-directory: infraestructura/bootstrap
         run: |
           ROLE_ARN=$(terraform output -raw github_actions_role_arn)
           BUCKET=$(terraform output -raw state_bucket_name)
@@ -97,16 +98,16 @@ jobs:
           echo "## ✅ Bootstrap completado" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Próximos pasos:" >> "$GITHUB_STEP_SUMMARY"
-          echo "1. Agrega este valor como secret **\`AWS_OIDC_ROLE_ARN\`** en GitHub:" >> "$GITHUB_STEP_SUMMARY"
-          echo "   \`${ROLE_ARN}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "2. Elimina los secrets **\`AWS_ACCESS_KEY_ID\`** y **\`AWS_SECRET_ACCESS_KEY\`** del repo" >> "$GITHUB_STEP_SUMMARY"
-          echo "3. Haz push a \`develop\` para disparar el pipeline de infraestructura con OIDC" >> "$GITHUB_STEP_SUMMARY"
+          echo "1. Agrega este valor como secret *\AWS_OIDC_ROLE_ARN\* en GitHub:" >> "$GITHUB_STEP_SUMMARY"
+          echo "   \${ROLE_ARN}\" >> "$GITHUB_STEP_SUMMARY"
+          echo "2. Elimina los secrets *\AWS_ACCESS_KEY_ID\* y *\AWS_SECRET_ACCESS_KEY\* del repo" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Haz push a \develop\ para disparar el pipeline de infra con OIDC" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Output | Valor |" >> "$GITHUB_STEP_SUMMARY"
           echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| Role ARN (→ secret AWS_OIDC_ROLE_ARN) | \`${ROLE_ARN}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| S3 Bucket | \`${BUCKET}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| DynamoDB Table | \`${TABLE}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Role ARN (→ secret AWS_OIDC_ROLE_ARN) | \${ROLE_ARN}\ |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| S3 Bucket | \${BUCKET}\ |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| DynamoDB Table | \${TABLE}\ |" >> "$GITHUB_STEP_SUMMARY"
 
           echo "ROLE_ARN=${ROLE_ARN}" >> "$GITHUB_ENV"
 

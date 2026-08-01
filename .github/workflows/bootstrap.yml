@@ -1,4 +1,4 @@
-name: Bootstrap — Infraestructura Base (una sola vez)
+name: Bootstrap — infraestructura Base (una sola vez)
 
 # Este workflow se ejecuta una única vez para aprovisionar la infraestructura
 # base requerida por Terraform:
@@ -64,7 +64,7 @@ jobs:
       - name: Crear terraform.tfvars para el bootstrap
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          cat > infra/bootstrap/terraform.tfvars <<EOF
+          cat > infraestructura/bootstrap/terraform.tfvars <<EOF
           project_name   = "microservicio-echo"
           aws_region     = "${{ env.AWS_REGION }}"
           aws_account_id = "${ACCOUNT_ID}"
@@ -78,15 +78,15 @@ jobs:
 
       - name: Terraform Init (estado local — no necesita S3 aún)
         run: terraform init
-        working-directory: infra/bootstrap
+        working-directory: infraestructura/bootstrap
 
       - name: Terraform Plan
         run: terraform plan -var-file=terraform.tfvars -out=bootstrap.tfplan
-        working-directory: infra/bootstrap
+        working-directory: infraestructura/bootstrap
 
       - name: Terraform Apply
         run: terraform apply -auto-approve bootstrap.tfplan
-        working-directory: infra/bootstrap
+        working-directory: infraestructura/bootstrap
 
       - name: Mostrar outputs — configura estos valores en GitHub
         run: |
@@ -100,7 +100,7 @@ jobs:
           echo "1. Agrega este valor como secret **\`AWS_OIDC_ROLE_ARN\`** en GitHub:" >> "$GITHUB_STEP_SUMMARY"
           echo "   \`${ROLE_ARN}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "2. Elimina los secrets **\`AWS_ACCESS_KEY_ID\`** y **\`AWS_SECRET_ACCESS_KEY\`** del repo" >> "$GITHUB_STEP_SUMMARY"
-          echo "3. Haz push a \`develop\` para disparar el pipeline de infra con OIDC" >> "$GITHUB_STEP_SUMMARY"
+          echo "3. Haz push a \`develop\` para disparar el pipeline de infraestructura con OIDC" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "| Output | Valor |" >> "$GITHUB_STEP_SUMMARY"
           echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"

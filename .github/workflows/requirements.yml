@@ -4,7 +4,7 @@ on:
   push:
     branches: [develop]
     paths-ignore:
-      - "infra/**"
+      - "infraestructura/**"
       - ".github/workflows/tf-infra.yml"
       - ".github/workflows/bootstrap.yml"
   workflow_dispatch:

@@ -4,7 +4,7 @@ from app.models import Respuesta, Solicitud, HealthResponse, incrementar_contado
 
 app = FastAPI(
     title="Microservicio E1",
-    version="1.0.0",
+    version="1.0.1",   # antes: "1.0.0"
     contact={"name": "Johan Almanza", "email": "jsalmanzap1941@gmail.com"},
     license_info={"name": "MIT"},
     openapi_tags=[

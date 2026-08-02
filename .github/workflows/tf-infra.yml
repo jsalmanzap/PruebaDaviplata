@@ -63,7 +63,7 @@ jobs:
           fi
           echo "env_name=${ENV}"          >> "$GITHUB_OUTPUT"
           echo "tf_dir=infraestructura/environments/${ENV}" >> "$GITHUB_OUTPUT"
-          echo "### Ambiente resuelto: \${ENV}\" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Ambiente resuelto: \`${ENV}\`" >> "$GITHUB_STEP_SUMMARY"
 
   # ── 1. Seguridad IaC (Checkov) ───────────────────────────────────────────────
   security-scan:
@@ -145,12 +145,12 @@ jobs:
         with:
           script: |
             const env = "${{ needs.resolve.outputs.env_name }}";
-            const body = #### Terraform Plan \${{ steps.plan.outcome }}\` → \${env}\
+            const body = `#### Terraform Plan \`${{ steps.plan.outcome }}\` → \`${env}\`
             <details><summary>Ver plan completo</summary>
 
-            \\\`terraform
+            \`\`\`terraform
             ${process.env.PLAN_OUTPUT}
-            \\\`
+            \`\`\`
             </details>`;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -214,7 +214,7 @@ jobs:
       - name: Resumen
         run: |
           ENV="${{ needs.resolve.outputs.env_name }}"
-          echo "## Terraform Apply — \${ENV}\ completado" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Terraform Apply — \`${ENV}\` completado" >> "$GITHUB_STEP_SUMMARY"
           echo "| Output | Valor |" >> "$GITHUB_STEP_SUMMARY"
           echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| ALB URL    | ${{ steps.tf-out.outputs.alb_url }} |" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,103 @@
+name: Rollback manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Ambiente a revertir"
+        required: true
+        type: choice
+        options: [dev, lab, prod]
+      task_definition_revision:
+        description: "Revisión de task definition a la que volver (ej. 7). Si se deja vacío, usa la revisión anterior a la actual"
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: microservicio-echo
+
+jobs:
+  rollback:
+    name: "Rollback manual → ECS [${{ github.event.inputs.environment }}]"
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolver task definition destino
+        id: target
+        run: |
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ github.event.inputs.environment }}"
+          REVISION="${{ github.event.inputs.task_definition_revision }}"
+
+          if [ -n "$REVISION" ]; then
+            TARGET_ARN=$(aws ecs describe-task-definition \
+              --task-definition "${CLUSTER}:${REVISION}" \
+              --query 'taskDefinition.taskDefinitionArn' --output text)
+          else
+            TARGET_ARN=$(aws ecs list-task-definitions \
+              --family-prefix "${CLUSTER}" \
+              --sort DESC \
+              --query 'taskDefinitionArns[1]' --output text)
+          fi
+
+          if [ -z "$TARGET_ARN" ] || [ "$TARGET_ARN" = "None" ]; then
+            echo "::error::No se encontró una revisión válida para el rollback"
+            exit 1
+          fi
+
+          echo "target_arn=${TARGET_ARN}" >> "$GITHUB_OUTPUT"
+          echo "Revisión destino: ${TARGET_ARN}"
+
+      - name: Actualizar servicio ECS
+        run: |
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ github.event.inputs.environment }}"
+          aws ecs update-service \
+            --cluster "${CLUSTER}" \
+            --service  "${CLUSTER}" \
+            --task-definition "${{ steps.target.outputs.target_arn }}"
+
+      - name: Esperar estabilización del servicio
+        timeout-minutes: 10
+        run: |
+          CLUSTER="${{ env.PROJECT_NAME }}-${{ github.event.inputs.environment }}"
+          aws ecs wait services-stable \
+            --cluster  "${CLUSTER}" \
+            --services "${CLUSTER}"
+
+      - name: Smoke test — /health
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "${{ env.PROJECT_NAME }}-${{ github.event.inputs.environment }}-alb" \
+            --query 'LoadBalancers[0].DNSName' --output text)
+
+          for i in {1..6}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${ALB_DNS}/health")
+            if [ "$STATUS" = "200" ]; then
+              echo "Rollback validado: HTTP ${STATUS} — http://${ALB_DNS}"
+              exit 0
+            fi
+            echo "Intento ${i}/6: HTTP ${STATUS} — reintentando en 10s..."
+            sleep 10
+          done
+          echo "Smoke test fallido tras 6 intentos: HTTP ${STATUS}"
+          exit 1
+
+      - name: Resumen
+        if: always()
+        run: |
+          echo "## Rollback manual — \`${{ github.event.inputs.environment }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Campo | Valor |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ambiente | \`${{ github.event.inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Task definition destino | \`${{ steps.target.outputs.target_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ejecutado por | \`${{ github.actor }}\` |" >> "$GITHUB_STEP_SUMMARY"

@@ -17,7 +17,7 @@ app = FastAPI(
 def healthcheck() -> HealthResponse:
     return HealthResponse(status="ok", service="Microservicio_E1")
 
-app.post("/consecutivo", response_model=Respuesta)
+@app.post("/consecutivo", response_model=Respuesta)
 def generar_consecutivo(solicitud: Solicitud):
     global contador
     with lock:

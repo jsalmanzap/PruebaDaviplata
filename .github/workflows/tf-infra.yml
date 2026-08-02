@@ -51,12 +51,13 @@ jobs:
           if [ -n "${{ github.event.inputs.environment }}" ]; then
             ENV="${{ github.event.inputs.environment }}"
           else
-            case "${{ github.ref_name }}" in
+            REF_NAME="${{ github.base_ref || github.ref_name }}"
+            case "$REF_NAME" in
               develop)    ENV=dev  ;;
               laboratory) ENV=lab  ;;
               main)       ENV=prod ;;
               *)
-                echo "Rama '${{ github.ref_name }}' no mapeada a ningún ambiente"
+                echo "Rama '$REF_NAME' no mapeada a ningún ambiente"
                 exit 1
                 ;;
             esac

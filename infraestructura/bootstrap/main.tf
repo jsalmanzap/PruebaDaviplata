@@ -113,9 +113,9 @@ resource "aws_iam_role_policy" "github_actions" {
         Sid    = "InfraManagement"
         Effect = "Allow"
         Action = [
-          "ec2:", "ecs:", "ecr:", "iam:",
-          "logs:", "elasticloadbalancing:",
-          "secretsmanager:", "application-autoscaling:"
+          "ec2:*", "ecs:*", "ecr:*", "iam:*",
+          "logs:*", "elasticloadbalancing:*",
+          "secretsmanager:*", "application-autoscaling:*"
         ]
         Resource = "*"
       }

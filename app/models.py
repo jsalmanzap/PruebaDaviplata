@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
-from pydantic import BaseModel
 from threading import Lock
+
 
 class HealthResponse(BaseModel):
     status: str = Field(description="Estado actual del servicio", examples=["ok"])
@@ -14,16 +14,24 @@ class HealthResponse(BaseModel):
         }
     }
 
+
 # Contador en memoria (se reinicia si la API se reinicia)
-contador = 0
-lock = Lock()  # para evitar problemas si llegan varias peticiones al tiempo
- 
- 
+_contador = 0
+_lock = Lock()  # para evitar problemas si llegan varias peticiones al tiempo
+
+
+def incrementar_contador() -> int:
+    global _contador
+    with _lock:
+        _contador += 1
+        return _contador
+
+
 class Solicitud(BaseModel):
     nombre: str
     id: int
- 
- 
+
+
 class Respuesta(BaseModel):
     nombre: str
     id: int

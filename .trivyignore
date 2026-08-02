@@ -1,0 +1,7 @@
+# CVEs en perl-base, incluido por la imagen base python:3.12-slim (Debian).
+# La aplicación es FastAPI/Python puro y no invoca perl en ningún flujo.
+# Sin versión corregida disponible por Debian al momento de este scan.
+CVE-2026-13221
+CVE-2026-42496
+CVE-2026-57433
+CVE-2026-8376

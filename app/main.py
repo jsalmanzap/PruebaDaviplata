@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.models import Respuesta, Solicitud, HealthResponse, lock
+from app.models import Respuesta, Solicitud, HealthResponse, incrementar_contador
 
 app = FastAPI(
     title="Microservicio E1",
@@ -13,17 +13,16 @@ app = FastAPI(
     ],
 )
 
+
 @app.get("/health", tags=["Health"], summary="Healthcheck")
 def healthcheck() -> HealthResponse:
     return HealthResponse(status="ok", service="Microservicio_E1")
 
-app.post("/consecutivo", response_model=Respuesta)
+
+@app.post("/consecutivo", response_model=Respuesta, tags=["consecutivo"])
 def generar_consecutivo(solicitud: Solicitud):
-    global contador
-    with lock:
-        contador += 1
-        valor_actual = contador
- 
+    valor_actual = incrementar_contador()
+
     return Respuesta(
         nombre=solicitud.nombre,
         id=solicitud.id,

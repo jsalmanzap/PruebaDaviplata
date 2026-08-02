@@ -8,10 +8,10 @@ name: Terraform Infrastructure
 on:
   push:
     branches: [develop, laboratory, main]
-    paths: ["infra/**"]
+    paths: ["infraestructura/**"]
   pull_request:
     branches: [develop, laboratory, main]
-    paths: ["infra/**"]
+    paths: ["infraestructura/**"]
   workflow_dispatch:
     inputs:
       environment:
@@ -51,18 +51,19 @@ jobs:
           if [ -n "${{ github.event.inputs.environment }}" ]; then
             ENV="${{ github.event.inputs.environment }}"
           else
-            case "${{ github.ref_name }}" in
+            REF_NAME="${{ github.base_ref || github.ref_name }}"
+            case "$REF_NAME" in
               develop)    ENV=dev  ;;
               laboratory) ENV=lab  ;;
               main)       ENV=prod ;;
               *)
-                echo "Rama '${{ github.ref_name }}' no mapeada a ningún ambiente"
+                echo "Rama '$REF_NAME' no mapeada a ningún ambiente"
                 exit 1
                 ;;
             esac
           fi
           echo "env_name=${ENV}"          >> "$GITHUB_OUTPUT"
-          echo "tf_dir=infra/environments/${ENV}" >> "$GITHUB_OUTPUT"
+          echo "tf_dir=infraestructura/environments/${ENV}" >> "$GITHUB_OUTPUT"
           echo "### Ambiente resuelto: \`${ENV}\`" >> "$GITHUB_STEP_SUMMARY"
 
   # ── 1. Seguridad IaC (Checkov) ───────────────────────────────────────────────

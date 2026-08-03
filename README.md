@@ -43,6 +43,46 @@ sonar-project.properties
 .trivyignore
 ```
 
+## Flujo CI/CD
+
+```mermaid
+flowchart TD
+    subgraph DEV["🔵 develop → dev"]
+        A1[Push a develop] --> A2{Cambió infraestructura/**?}
+        A2 -->|sí| A3[tf-infra.yml<br/>Plan → Apply]
+        A1 --> A4{Cambió app/**, Dockerfile,<br/>requirements.txt?}
+        A4 -->|sí| A5[requirements.yml<br/>Tests, cobertura, SAST, SCA,<br/>Trivy, Sonar, secret scan]
+        A5 --> A6[develop.yml<br/>Build & Push imagen → ECR]
+        A6 --> A7[Deploy → ECS dev]
+        A7 --> A8[Smoke test /health]
+    end
+
+    A8 -->|OK, promover manualmente| B1
+
+    subgraph LAB["🟡 laboratory → lab"]
+        B1[Push/PR a laboratory] --> B2[tf-infra.yml<br/>Plan → Apply<br/>requiere aprobación Environment]
+        B1 --> B3[laboratory.yml<br/>Build & Deploy → ECS lab]
+        B3 --> B4[Smoke test /health]
+    end
+
+    B4 -->|OK, promover manualmente| C1
+
+    subgraph PROD["🔴 main → prod"]
+        C1[Push/PR a main] --> C2[tf-infra.yml<br/>Plan → Apply<br/>requiere aprobación Environment]
+        C1 --> C3[main.yml<br/>Build & Push imagen → ECR]
+        C3 --> C4[Deploy → ECS prod<br/>requiere aprobación Environment]
+        C4 --> C5[Smoke test /health]
+        C5 -->|falla| C6[Rollback automático<br/>→ última revisión estable]
+        C5 -->|OK| C7[✅ Prod actualizado]
+    end
+
+    D1[Rollback manual<br/>rollback.yml] -.->|bajo demanda,<br/>cualquier ambiente| A7
+    D1 -.-> B3
+    D1 -.-> C4
+```
+
+Todos los jobs que hablan con AWS se autentican vía **OIDC** (`aws-actions/configure-aws-credentials`), asumiendo el rol `AWS_OIDC_ROLE_ARN` — no hay credenciales estáticas en el flujo normal, solo durante el bootstrap inicial.
+
 ## Ambientes y estrategia de ramas
 
 | Rama         | Ambiente | Despliegue de infra (`tf-infra.yml`) | Despliegue de app       |
@@ -119,4 +159,4 @@ Se ejecuta en cada push a `develop`:
 |----------------------|-----------------------------------------------------------|
 | `AWS_OIDC_ROLE_ARN`  | Rol IAM que asumen los pipelines vía OIDC                 |
 | `SONAR_TOKEN`        | Autenticación contra SonarCloud                           |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Solo durante el bootstrap inicial; se eliminan después | 
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Solo durante el bootstrap inicial; se eliminan después |
